@@ -100,6 +100,54 @@ func FuzzE2EVariableSize(f *testing.F) {
 	})
 }
 
+func FuzzJustify(f *testing.F) {
+	face := loadOpentypeFont(f, "../font/testdata/Amiri-Regular.ttf")
+	f.Add(benchParagraphArabic, byte(200), byte(0))
+	f.Add(benchParagraphLatin, byte(200), byte(1))
+	f.Fuzz(func(t *testing.T, input string, target byte, capped byte) {
+		textInput := []rune(input)
+		if len(textInput) == 0 {
+			return
+		}
+		var shaper HarfbuzzShaper
+		out := []Output{shaper.Shape(Input{
+			Text:      textInput,
+			RunStart:  0,
+			RunEnd:    len(textInput),
+			Direction: di.DirectionRTL,
+			Face:      face,
+			Size:      16 * 72,
+			Script:    language.Arabic,
+			Language:  language.NewLanguage("AR"),
+		})}
+		var l LineWrapper
+		lines, _ := l.WrapParagraph(WrapConfig{}, int(target)+1, textInput, NewSliceIterator(out))
+		cfg := JustificationConfig{}
+		if capped != 0 {
+			cfg.MaxExpansion = fixed.I(int(capped))
+		}
+		justified := JustifyParagraph(lines, textInput, fixed.I(int(target)+1), cfg)
+		if len(justified) != len(lines) {
+			t.Fatalf("expected %d justified lines, got %d", len(lines), len(justified))
+		}
+		for i, jl := range justified {
+			// The reported width must always match the actual glyph advances.
+			if got := lineWidthForTest(jl.Line); got != jl.Width {
+				t.Errorf("line %d: reported width %d != actual width %d", i, jl.Width, got)
+			}
+			// The line can only grow, never shrink below its natural width.
+			natural := lineWidthForTest(lines[i])
+			if jl.Width < natural {
+				t.Errorf("line %d shrank from %d to %d", i, natural, jl.Width)
+			}
+			// Cluster accounting must be preserved.
+			if len(clustersForTest(jl.Line)) != len(clustersForTest(lines[i])) {
+				t.Errorf("line %d: cluster count changed", i)
+			}
+		}
+	})
+}
+
 func FuzzBreakOptions(f *testing.F) {
 	f.Add(string([]rune{183067, 318808839, 476266048}))
 	f.Add(benchParagraphArabic)
